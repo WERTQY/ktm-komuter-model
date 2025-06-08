@@ -68,7 +68,16 @@ class FeaturePipeline:
 # -------------------- Load model & coords --------------------
 @st.cache(allow_output_mutation=True)
 def load_model_and_pipeline():
-    model = load("final_lightgbm_model.pkl")
+    """
+    Load trained model and station coordinates mapping.
+    Looks for either 'model.joblib' or 'final_lightgbm_model.pkl'.
+    """
+    # Load model, try joblib first then pickle
+    try:
+        model = load("model.joblib")
+    except FileNotFoundError:
+        model = load("final_lightgbm_model.pkl")
+    # Load station coordinates mapping
     try:
         station_coords = load("station_coords.joblib")
     except Exception:
