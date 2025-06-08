@@ -194,11 +194,11 @@ interchange_stations = [
 ]
 inter_coords = [(coord_map[s]["lat"],coord_map[s]["lon"]) for s in interchange_stations]
 station_to_interchange = {}
-for streamlit,c in coord_map.items():
-    if streamlit in interchange_stations:
-        station_to_interchange[streamlit] = 0.0
+for station,c in coord_map.items():
+    if station in interchange_stations:
+        station_to_interchange[station] = 0.0
     else:
-        station_to_interchange[streamlit] = min(
+        station_to_interchange[station] = min(
             geodesic((c["lat"],c["lon"]), ic).km for ic in inter_coords
         )
 
@@ -217,12 +217,12 @@ station_density = {st:density(st) for st in coord_map}
 # Holiday calendars: try state‐level, else fallback to national
 nat_hols = holidays.Malaysia()
 state_hols = {}
-for streamlit in set(station2state.values()):
+for state in set(station2state.values()):
     try:
-        state_hols[streamlit] = holidays.Malaysia(subdiv=streamlit)
+        state_hols[state] = holidays.Malaysia(subdiv=state)
     except NotImplementedError:
         # fallback for unsupported subdivision names
-        state_hols[streamlit] = nat_hols
+        state_hols[state] = nat_hols
 festivals = {"Chinese New Year","Thaipusam","Hari Raya Puasa","Hari Raya Haji","Deepavali"}
 
 # 2.7 Precompute per-origin/hour average ridership from hist_df
