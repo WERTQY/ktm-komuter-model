@@ -8,32 +8,29 @@ from joblib import load
 
 # -------------------- Transformers --------------------
 class HolidayTransformer(BaseEstimator, TransformerMixin):
-    def __init__(self, country="MY", subdiv=None):
-        # Use python-holidays for dynamic holiday lookup
-        self.hol = holidays.CountryHoliday(country, subdiv=subdiv)
+    def __init__(self, country="MY"):  # national holidays
+        self.hol = holidays.CountryHoliday(country)
     def fit(self, X, y=None): return self
     def transform(self, X):
         X = X.copy()
         # flag if date is holiday
         X["is_holiday"] = X['date'].dt.date.apply(lambda d: d in self.hol)
+        # optional: get holiday name if needed
+        X["holiday_name"] = X['date'].dt.date.map(lambda d: self.hol.get(d))
         return X
 
 class GeoTransformer(BaseEstimator, TransformerMixin):
     def __init__(self, station_coords: dict):
-        # station_coords: {name: (lat, lon)}
         self.coords = station_coords
-        # define central hub coordinate
         self.center = self.coords.get("KL Sentral")
     def fit(self, X, y=None): return self
     def transform(self, X):
         X = X.copy()
-        # straight-line distance
         X['straight_km'] = X.apply(
             lambda r: geodesic(self.coords[r.origin], self.coords[r.destination]).km
             if r.origin in self.coords and r.destination in self.coords else np.nan,
             axis=1
         )
-        # distance to center
         if self.center:
             X['orig_center_km'] = X.origin.map(lambda s: geodesic(self.coords[s], self.center).km if s in self.coords else np.nan)
             X['dest_center_km'] = X.destination.map(lambda s: geodesic(self.coords[s], self.center).km if s in self.coords else np.nan)
@@ -43,28 +40,24 @@ class TimeCyclicTransformer(BaseEstimator, TransformerMixin):
     def fit(self, X, y=None): return self
     def transform(self, X):
         X = X.copy()
-        # hour cyclic
         X['hour_sin'] = np.sin(2 * np.pi * X.hour / 24)
         X['hour_cos'] = np.cos(2 * np.pi * X.hour / 24)
-        # day-of-week cyclic
         dow = X['date'].dt.dayofweek
         X['dow_sin'] = np.sin(2 * np.pi * dow / 7)
         X['dow_cos'] = np.cos(2 * np.pi * dow / 7)
         return X
 
 class FeaturePipeline:
-    def __init__(self, station_coords: dict, country="MY", subdiv=None):
+    def __init__(self, station_coords: dict):
         self.steps = [
-            HolidayTransformer(country=country, subdiv=subdiv),
+            HolidayTransformer(),
             GeoTransformer(station_coords),
             TimeCyclicTransformer()
-            # add more transformers here as needed
         ]
     def transform(self, df: pd.DataFrame) -> pd.DataFrame:
         X = df.copy()
         for step in self.steps:
             X = step.transform(X)
-        # select features for model
         features = [
             'straight_km', 'orig_center_km', 'dest_center_km',
             'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos',
@@ -73,64 +66,45 @@ class FeaturePipeline:
         return X[features]
 
 # -------------------- Load model & coords --------------------
-# Replace paths with your actual files
 @st.cache(allow_output_mutation=True)
 def load_model_and_pipeline():
-    """
-    Load trained model and station coordinates mapping.
-    Station coordinates can be provided as a joblib dump of a dict or as a CSV file.
-    """
-    # Load model
     model = load("model.joblib")
-    # Load station coordinates mapping
     try:
-        # Expect a dict saved via joblib: {station_name: (lat, lon)}
         station_coords = load("station_coords.joblib")
     except Exception:
-        # Fallback: load from CSV with columns station, lat, lon
         df_coor = pd.read_csv("station_coords.csv")
-        station_coords = {
-            row['station']: (row['lat'], row['lon'])
-            for _, row in df_coor.iterrows()
-        }
-    # Build feature pipeline
+        station_coords = {row['station']:(row['lat'],row['lon']) for _,row in df_coor.iterrows()}
     pipeline = FeaturePipeline(station_coords)
-    return model, pipeline
+    return model, pipeline, station_coords
 
 # -------------------- Streamlit UI --------------------
 st.title("🚆 KTM Komuter Ridership Demo")
 
-# 1. Input: upload CSV or manual
-upload = st.file_uploader("Upload raw ridership CSV (with columns: origin, destination, date, hour)", type="csv")
-if upload:
-    df_raw = pd.read_csv(upload, parse_dates=["date"])  # expect columns: origin,destination,date,hour
-else:
-    st.info("Or enter a single record manually below:")
-    origin = st.text_input("Origin station")
-    dest = st.text_input("Destination station")
-    date = st.date_input("Date")
-    hour = st.number_input("Hour (0–23)", min_value=0, max_value=23, value=8)
-    if origin and dest:
-        df_raw = pd.DataFrame([{"origin": origin, "destination": dest, "date": pd.to_datetime(date), "hour": hour}])
-    else:
-        df_raw = pd.DataFrame([])
+# load artifacts
+model, pipeline, station_coords = load_model_and_pipeline()
+stations = sorted(station_coords.keys())
 
-# 2. Holiday library option
-use_lib = st.checkbox("Use dynamic holiday lookup (python-holidays)", value=True)
-# subdiv selection if dynamic
-subdiv = None
-if use_lib:
-    subdiv = st.selectbox("Select state/subdivision for holidays", [None] + sorted(holidays.Malaysia().subdivisions))
+# input selectors
+origin = st.selectbox("Origin station", stations)
+destination = st.selectbox("Destination station", stations)
+date = st.date_input("Date")
+hour = st.slider("Hour of day", 0, 23, 8)
 
-# 3. Predict
-if not df_raw.empty and st.button("Run prediction"):
-    model, pipeline = load_model_and_pipeline()
-    # transform
+# run prediction button
+if st.button("Run prediction"):
+    df_raw = pd.DataFrame([{
+        "origin": origin,
+        "destination": destination,
+        "date": pd.to_datetime(date),
+        "hour": hour
+    }])
     df_feat = pipeline.transform(df_raw)
-    preds = model.predict(df_feat)
-    df_raw["predicted_ridership"] = preds
-    st.table(df_raw)
+    pred = model.predict(df_feat)[0]
+    df_raw["predicted_ridership"] = pred
+    df_ans = df_raw.copy()
+    df_ans["is_holiday"] = df_ans['date'].dt.date.apply(lambda d: d in holidays.CountryHoliday("MY"))
+    st.table(df_ans)
 else:
-    st.write("Awaiting input...")
+    st.write("Select parameters and click 'Run prediction' to see results.")
 
-st.markdown("---\n*Built with Streamlit* and python-holidays*")
+st.markdown("---\n*Built with Streamlit & python-holidays* (national only)")
