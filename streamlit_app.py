@@ -1,4 +1,4 @@
-import streamlit as stl
+import streamlit
 import pandas as pd
 import numpy as np
 import pickle
@@ -12,7 +12,7 @@ import category_encoders as ce
 # ────────────────────────────────────────────────────────────────
 # 1) Load model, encoder, feature list, and historical data
 # ────────────────────────────────────────────────────────────────
-@stl.cache_resource
+@streamlit.cache_resource
 def load_artifacts():
     model = pickle.load(open("model.pkl","rb"))
     enc_hi = pickle.load(open("enc_hi.pkl","rb"))
@@ -25,7 +25,7 @@ def load_artifacts():
 
 model, enc_hi, feature_columns, hist_df = load_artifacts()
 
-stl.title("KTM Komuter Recursive Ridership Predictor")
+streamlit.title("KTM Komuter Recursive Ridership Predictor")
 
 # ────────────────────────────────────────────────────────────────
 # 2) Precompute static maps (lines, states, coords, distances, holidays…)
@@ -194,11 +194,11 @@ interchange_stations = [
 ]
 inter_coords = [(coord_map[s]["lat"],coord_map[s]["lon"]) for s in interchange_stations]
 station_to_interchange = {}
-for stl,c in coord_map.items():
-    if stl in interchange_stations:
-        station_to_interchange[stl] = 0.0
+for streamlit,c in coord_map.items():
+    if streamlit in interchange_stations:
+        station_to_interchange[streamlit] = 0.0
     else:
-        station_to_interchange[stl] = min(
+        station_to_interchange[streamlit] = min(
             geodesic((c["lat"],c["lon"]), ic).km for ic in inter_coords
         )
 
@@ -206,7 +206,7 @@ for stl,c in coord_map.items():
 def density(st):
     lat0,lon0 = coord_map[st]["lat"], coord_map[st]["lon"]
     return sum(
-        1 for o,c in coord_map.items() 
+        1 for o,c in coord_map.items()
         if o!=st and geodesic((lat0,lon0),(c["lat"],c["lon"])).km<=5
     )
 station_density = {st:density(st) for st in coord_map}
@@ -217,12 +217,12 @@ station_density = {st:density(st) for st in coord_map}
 # Holiday calendars: try state‐level, else fallback to national
 nat_hols = holidays.Malaysia()
 state_hols = {}
-for stl in set(station2state.values()):
+for streamlit in set(station2state.values()):
     try:
-        state_hols[stl] = holidays.Malaysia(subdiv=stl)
+        state_hols[streamlit] = holidays.Malaysia(subdiv=streamlit)
     except NotImplementedError:
         # fallback for unsupported subdivision names
-        state_hols[stl] = nat_hols
+        state_hols[streamlit] = nat_hols
 festivals = {"Chinese New Year","Thaipusam","Hari Raya Puasa","Hari Raya Haji","Deepavali"}
 
 # 2.7 Precompute per-origin/hour average ridership from hist_df
@@ -322,15 +322,12 @@ def prepare_static_feats(df):
 # ────────────────────────────────────────────────────────────────
 # 4) User Inputs
 # ────────────────────────────────────────────────────────────────
-stl.write("DEBUG: type of stl is", type(stl))
-stl.write("DEBUG: repr(stl) =", repr(stl))
+origin      = streamlit.selectbox("Origin", station_list)
+destination = streamlit.selectbox("Destination", station_list)
+travel_date = streamlit.date_input("Predict Through Date", min_value=datetime.date(2025, 5, 13))
+hour        = streamlit.number_input("Hour of Day", min_value=0, max_value=23, value=0)
 
-origin      = stl.selectbox("Origin", station_list)
-destination = stl.selectbox("Destination", station_list)
-travel_date = stl.date_input("Predict Through Date", min_value=datetime.date(2025, 5, 13))
-hour        = stl.number_input("Hour of Day", min_value=0, max_value=23, value=0)
-
-if stl.button("Run Recursive Forecast"):
+if streamlit.button("Run Recursive Forecast"):
     # 5) Seed series with real ridership up to 2025-05-12 at this hour:
     hist = hist_df[
         (hist_df.origin==origin)&
@@ -383,5 +380,5 @@ if stl.button("Run Recursive Forecast"):
 
     # 8) Show results
     df_res = pd.DataFrame(results)
-    stl.subheader("Recursive Forecast Results")
-    stl.dataframe(df_res, use_container_width=True)
+    streamlit.subheader("Recursive Forecast Results")
+    streamlit.dataframe(df_res, use_container_width=True)
