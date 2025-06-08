@@ -81,7 +81,7 @@ class FullFeaturePipeline:
 # -------------------- Load artifacts --------------------
 @st.cache(allow_output_mutation=True)
 def load_artifacts():
-    model = load('final_lightgbm_model.pkl')
+    model = load('model.joblib')
     station_coords = load('station_coords.joblib')  # {name:(lat,lon)}
     # Dynamically generate holiday_df using python-holidays, matching df_public_holiday_combined format
     # We treat all Malaysian states equally (national holidays)
