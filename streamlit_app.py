@@ -304,7 +304,11 @@ def prepare_static_feats(df):
     ).astype("uint8")
     df["is_holiday"] = (df["orig_holiday"]|df["dest_holiday"]).astype("uint8")
     # near-festival
-    fest_dates = [d for d,name in nat_hols.items() if name in festivals]
+    fest_dates = [
+        pd.Timestamp(d)   # convert date → Timestamp
+        for d,name in nat_hols.items() 
+        if name in festivals
+    ]
     df["near_big_holiday"] = df["date"].apply(
         lambda d: any(abs((d-f).days)<=1 for f in fest_dates)
     ).astype("uint8")
