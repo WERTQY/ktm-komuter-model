@@ -143,5 +143,4 @@ else:
     else:
         st.write("Select inputs and click 'Run multi-step forecast' to see predictions from last data up to your date.")
 
-st.markdown("---
-*Forecasts start from 2024 and use full history up to last available date.*")
+st.markdown("*Forecasts start from 2024 and use full history up to last available date.*")
