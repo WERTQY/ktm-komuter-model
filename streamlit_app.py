@@ -1,11 +1,10 @@
-# app.py
-import streamlit as st
+import streamlit as stl
 import pandas as pd
 import numpy as np
 import pickle
 import datetime
 from collections import defaultdict
-import io
+from io import StringIO
 from geopy.distance import geodesic
 import holidays
 import category_encoders as ce
@@ -13,7 +12,7 @@ import category_encoders as ce
 # ────────────────────────────────────────────────────────────────
 # 1) Load model, encoder, feature list, and historical data
 # ────────────────────────────────────────────────────────────────
-@st.cache_resource
+@stl.cache_resource
 def load_artifacts():
     model = pickle.load(open("model.pkl","rb"))
     enc_hi = pickle.load(open("enc_hi.pkl","rb"))
@@ -26,7 +25,7 @@ def load_artifacts():
 
 model, enc_hi, feature_columns, hist_df = load_artifacts()
 
-st.title("KTM Komuter Recursive Ridership Predictor")
+stl.title("KTM Komuter Recursive Ridership Predictor")
 
 # ────────────────────────────────────────────────────────────────
 # 2) Precompute static maps (lines, states, coords, distances, holidays…)
@@ -177,7 +176,7 @@ station_coords_csv = """stop_id,stop_name,stop_lat,stop_lon
 18100,Kuang,3.258267,101.554794
 18500,Sungai Buloh,3.206356,101.580128
 """
-df_coords = pd.read_csv(io.StringIO(station_coords_csv)).drop(columns=["stop_id"])
+df_coords = pd.read_csv(StringIO(station_coords_csv)).drop(columns=["stop_id"])
 df_coords.rename(columns={"stop_name":"station","stop_lat":"lat","stop_lon":"lon"}, inplace=True)
 coord_map = df_coords.set_index("station")[["lat","lon"]].to_dict("index")
 
@@ -195,11 +194,11 @@ interchange_stations = [
 ]
 inter_coords = [(coord_map[s]["lat"],coord_map[s]["lon"]) for s in interchange_stations]
 station_to_interchange = {}
-for st,c in coord_map.items():
-    if st in interchange_stations:
-        station_to_interchange[st] = 0.0
+for stl,c in coord_map.items():
+    if stl in interchange_stations:
+        station_to_interchange[stl] = 0.0
     else:
-        station_to_interchange[st] = min(
+        station_to_interchange[stl] = min(
             geodesic((c["lat"],c["lon"]), ic).km for ic in inter_coords
         )
 
@@ -218,12 +217,12 @@ station_density = {st:density(st) for st in coord_map}
 # Holiday calendars: try state‐level, else fallback to national
 nat_hols = holidays.Malaysia()
 state_hols = {}
-for st in set(station2state.values()):
+for stl in set(station2state.values()):
     try:
-        state_hols[st] = holidays.Malaysia(subdiv=st)
+        state_hols[stl] = holidays.Malaysia(subdiv=stl)
     except NotImplementedError:
         # fallback for unsupported subdivision names
-        state_hols[st] = nat_hols
+        state_hols[stl] = nat_hols
 festivals = {"Chinese New Year","Thaipusam","Hari Raya Puasa","Hari Raya Haji","Deepavali"}
 
 # 2.7 Precompute per-origin/hour average ridership from hist_df
@@ -323,12 +322,12 @@ def prepare_static_feats(df):
 # ────────────────────────────────────────────────────────────────
 # 4) User Inputs
 # ────────────────────────────────────────────────────────────────
-origin      = st.selectbox("Origin", station_list)
-destination = st.selectbox("Destination", station_list)
-travel_date = st.date_input("Predict Through Date", min_value=datetime.date(2025,5,13))
-hour        = st.number_input("Hour of Day", min_value=0, max_value=23, value=0)
+origin      = stl.selectbox("Origin", station_list)
+destination = stl.selectbox("Destination", station_list)
+travel_date = stl.date_input("Predict Through Date", min_value=datetime.date(2025, 5, 13))
+hour        = stl.number_input("Hour of Day", min_value=0, max_value=23, value=0)
 
-if st.button("Run Recursive Forecast"):
+if stl.button("Run Recursive Forecast"):
     # 5) Seed series with real ridership up to 2025-05-12 at this hour:
     hist = hist_df[
         (hist_df.origin==origin)&
@@ -381,5 +380,5 @@ if st.button("Run Recursive Forecast"):
 
     # 8) Show results
     df_res = pd.DataFrame(results)
-    st.subheader("Recursive Forecast Results")
-    st.dataframe(df_res, use_container_width=True)
+    stl.subheader("Recursive Forecast Results")
+    stl.dataframe(df_res, use_container_width=True)
