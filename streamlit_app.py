@@ -177,7 +177,7 @@ station_coords_csv = """stop_id,stop_name,stop_lat,stop_lon
 18100,Kuang,3.258267,101.554794
 18500,Sungai Buloh,3.206356,101.580128
 """
-df_coords = pd.read_csv(StringIO(station_coords_csv)).drop(columns=["stop_id"])
+df_coords = pd.read_csv(io.StringIO(station_coords_csv)).drop(columns=["stop_id"])
 df_coords.rename(columns={"stop_name":"station","stop_lat":"lat","stop_lon":"lon"}, inplace=True)
 coord_map = df_coords.set_index("station")[["lat","lon"]].to_dict("index")
 
