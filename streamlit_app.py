@@ -98,7 +98,7 @@ def load_artifacts():
             records.append({'date': date, 'states': ", ".join(malaysia_states)})
     holiday_df = pd.DataFrame(records)
     # Load historical ridership
-    hist = pd.read_parquet('df_ridership_clean.parquet')
+    hist = pd.read_parquet('full_history.parquet')
     hist = hist[hist['date']>=pd.to_datetime('2024-01-01')]
     return model, station_coords, holiday_df, hist
 
