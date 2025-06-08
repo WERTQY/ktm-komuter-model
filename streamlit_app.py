@@ -83,7 +83,21 @@ class FullFeaturePipeline:
 def load_artifacts():
     model = load('model.joblib')
     station_coords = load('station_coords.joblib')  # {name:(lat,lon)}
-    holiday_df = pd.read_parquet('df_public_holiday_combined.parquet')
+    # Dynamically generate holiday_df using python-holidays, matching df_public_holiday_combined format
+    # We treat all Malaysian states equally (national holidays)
+    years = list(range(2023, hist_df['date'].dt.year.max()+2)) if 'hist_df' in locals() else list(range(2023, 2027))
+    hol = holidays.Malaysia()
+    malaysia_states = [
+        'Johor','Kedah','Kelantan','Malacca','Negeri Sembilan','Pahang','Penang','Perak','Perlis',
+        'Sabah','Sarawak','Selangor','Terengganu','Kuala Lumpur','Labuan','Putrajaya'
+    ]
+    records = []
+    for date, name in hol.items():
+        if date.year in years:
+            # national holiday affects all states
+            records.append({'date': date, 'states': ", ".join(malaysia_states)})
+    holiday_df = pd.DataFrame(records)
+    # Load historical ridership
     hist = pd.read_parquet('df_ridership_clean.parquet')
     hist = hist[hist['date']>=pd.to_datetime('2024-01-01')]
     return model, station_coords, holiday_df, hist
