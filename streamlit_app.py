@@ -346,13 +346,26 @@ if streamlit.button("Run Recursive Forecast"):
     end_ts   = pd.Timestamp.combine(travel_date, datetime.time(hour))
     pred_times = pd.date_range(start=start_ts, end=end_ts, freq="24H")
 
-     # 7) Loop forward, computing history‐dependent + static features
+    # 7) Loop forward, computing history‐dependent + static features
     results = []
     series = hist.copy()
     for ts in pred_times:
-        # … (history features calculation stays the same) …
+        # A) compute history‐dependent features
+        lag1   = series.shift(1).get(ts, 0.0)
+        lag24  = series.shift(24).get(ts, 0.0)
+        delta  = lag1 - lag24
 
-        # B) build one-row df
+        # 7-day rolling mean excluding current ts
+        window = series[ts - pd.Timedelta(days=7) : ts - pd.Timedelta(hours=1)]
+        roll7  = window.mean() if not window.empty else 0.0
+
+        # overall std up to ts
+        std7   = series[:ts].std(ddof=0) if len(series[:ts]) > 1 else 0.0
+
+        # average origin‐hour ridership
+        avg_oh = avg_map.get((origin, hour), 0.0)
+
+        # B) build one-row df with both history + ID cols
         row = pd.DataFrame([{
             "origin": origin,
             "destination": destination,
@@ -369,10 +382,10 @@ if streamlit.button("Run Recursive Forecast"):
         # C) static features
         feat = prepare_static_feats(row)
 
-        # D) ENCODE FIRST (so enc_hi sees origin, destination, orig_dest_pair)
+        # D) ENCODE FIRST so enc_hi sees origin/destination/orig_dest_pair
         enc = enc_hi.transform(feat)
 
-        # E) now drop the raw ID/date/hour columns
+        # E) drop raw ID/date/hour columns
         enc.drop(columns=["origin", "destination", "date", "hour"], inplace=True, errors="ignore")
 
         # F) one-hot + align to training columns
@@ -383,8 +396,8 @@ if streamlit.button("Run Recursive Forecast"):
         yhat = model.predict(enc)[0]
         series.at[ts] = yhat
         results.append({"date": ts.date(), "predicted_ridership": int(yhat)})
-        
+
     # 8) Show results
     df_res = pd.DataFrame(results)
-    streamlit.subheader("Recursive Forecast Results")
-    streamlit.dataframe(df_res, use_container_width=True)
+    st.subheader("Recursive Forecast Results")
+    st.dataframe(df_res, use_container_width=True)
