@@ -83,9 +83,9 @@ class FullFeaturePipeline:
 def load_artifacts():
     model = load('model.joblib')
     station_coords = load('station_coords.joblib')  # {name:(lat,lon)}
-    # Dynamically generate holiday_df using python-holidays, matching df_public_holiday_combined format
-    # We treat all Malaysian states equally (national holidays)
-    years = list(range(2023, hist_df['date'].dt.year.max()+2)) if 'hist_df' in locals() else list(range(2023, 2027))
+    # Dynamically generate holiday_df using python-holidays
+    # Static year range for holidays
+    years = list(range(2023, 2027))
     hol = holidays.Malaysia()
     malaysia_states = [
         'Johor','Kedah','Kelantan','Malacca','Negeri Sembilan','Pahang','Penang','Perak','Perlis',
