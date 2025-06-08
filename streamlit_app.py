@@ -68,7 +68,7 @@ class FeaturePipeline:
 # -------------------- Load model & coords --------------------
 @st.cache(allow_output_mutation=True)
 def load_model_and_pipeline():
-    model = load("model.joblib")
+    model = load("final_lightgbm_model.joblib")
     try:
         station_coords = load("station_coords.joblib")
     except Exception:
