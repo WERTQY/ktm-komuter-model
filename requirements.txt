@@ -1,0 +1,7 @@
+streamlit
+pandas
+numpy
+holidays
+geopy
+scikit-learn
+joblib
