@@ -349,22 +349,26 @@ if streamlit.button("Run Recursive Forecast"):
     # … after computing pred_times …
 
 # 2.7 Extract the three target‐encode mappings once up front
-def get_te_map(enc, col):
-    for m in enc.mapping:
-        if m['col'] == col:
-            return m['mapping']
-    raise KeyError(f"No mapping found for {col}")
+# 2.7 Extract the three target‐encode mappings once up front
+    mp = enc_hi.mapping
+    if isinstance(mp, dict):
+        # mapping was saved as {col: pd.Series(mapping), ...}
+        origin_map = mp['origin']
+        dest_map   = mp['destination']
+        pair_map   = mp['orig_dest_pair']
+    else:
+        # fallback for list-of-dicts style
+        def _get_map_list(mapping, col):
+            for m in mapping:
+                if m.get('col') == col:
+                    return m.get('mapping')
+            raise KeyError(f"No mapping found for {col}")
+        origin_map = _get_map_list(mp, 'origin')
+        dest_map   = _get_map_list(mp, 'destination')
+        pair_map   = _get_map_list(mp, 'orig_dest_pair')
+    
+    global_mean = enc_hi._global_mean
 
-origin_map = get_te_map(enc_hi, 'origin')
-dest_map   = get_te_map(enc_hi, 'destination')
-pair_map   = get_te_map(enc_hi, 'orig_dest_pair')
-global_mean = enc_hi._global_mean
-
-# 7) Loop forward …
-results = []
-series = hist.copy()
-for ts in pred_times:
-    # … compute history features …
 
     # B) build one-row df
     row = pd.DataFrame([{
