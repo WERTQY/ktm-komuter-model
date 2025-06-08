@@ -213,8 +213,17 @@ def density(st):
 station_density = {st:density(st) for st in coord_map}
 
 # 2.6 Holiday calendars
+# nat_hols = holidays.Malaysia()
+# state_hols = {st: holidays.Malaysia(subdiv=st) for st in set(station2state.values())}
+# Holiday calendars: try state‐level, else fallback to national
 nat_hols = holidays.Malaysia()
-state_hols = {st: holidays.Malaysia(subdiv=st) for st in set(station2state.values())}
+state_hols = {}
+for st in set(station2state.values()):
+    try:
+        state_hols[st] = holidays.Malaysia(subdiv=st)
+    except NotImplementedError:
+        # fallback for unsupported subdivision names
+        state_hols[st] = nat_hols
 festivals = {"Chinese New Year","Thaipusam","Hari Raya Puasa","Hari Raya Haji","Deepavali"}
 
 # 2.7 Precompute per-origin/hour average ridership from hist_df
