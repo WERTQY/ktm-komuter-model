@@ -346,6 +346,12 @@ if streamlit.button("Run Recursive Forecast"):
     end_ts   = pd.Timestamp.combine(travel_date, datetime.time(hour))
     pred_times = pd.date_range(start=start_ts, end=end_ts, freq="24H")
 
+    # 2.7 Extract the three target‐encode mappings once up front
+    origin_map = enc_hi.mapping['origin']['target_encode']
+    dest_map   = enc_hi.mapping['destination']['target_encode']
+    pair_map   = enc_hi.mapping['orig_dest_pair']['target_encode']
+    global_mean = enc_hi._global_mean
+    
     # 7) Loop forward, computing history‐dependent + static features
     results = []
     series = hist.copy()
@@ -354,21 +360,16 @@ if streamlit.button("Run Recursive Forecast"):
         lag1   = series.shift(1).get(ts, 0.0)
         lag24  = series.shift(24).get(ts, 0.0)
         delta  = lag1 - lag24
-
-        # 7-day rolling mean excluding current ts
         window = series[ts - pd.Timedelta(days=7) : ts - pd.Timedelta(hours=1)]
         roll7  = window.mean() if not window.empty else 0.0
-
-        # overall std up to ts
         std7   = series[:ts].std(ddof=0) if len(series[:ts]) > 1 else 0.0
-
-        # average origin‐hour ridership
         avg_oh = avg_map.get((origin, hour), 0.0)
-
-        # B) build one-row df with both history + ID cols
+    
+        # B) build one-row df with history + IDs
         row = pd.DataFrame([{
             "origin": origin,
             "destination": destination,
+            "orig_dest_pair": f"{origin}_{destination}",
             "date": ts.normalize(),
             "hour": hour,
             "lag1_ridership": lag1,
@@ -378,25 +379,35 @@ if streamlit.button("Run Recursive Forecast"):
             "weekly_pattern_std": std7,
             "avg_ridership_origin_hour": avg_oh
         }])
-
+    
         # C) static features
         feat = prepare_static_feats(row)
-
-        # D) ENCODE FIRST so enc_hi sees origin/destination/orig_dest_pair
-        enc = enc_hi.transform(feat)
-
-        # E) drop raw ID/date/hour columns
-        enc.drop(columns=["origin", "destination", "date", "hour"], inplace=True, errors="ignore")
-
-        # F) one-hot + align to training columns
-        enc = pd.get_dummies(enc, drop_first=True)
-        enc = enc.reindex(columns=feature_columns, fill_value=0)
-
-        # G) predict & append
+    
+        # D) manual target‐encode the three high‐card cols
+        feat['origin_te']         = feat['origin'].map(origin_map).fillna(global_mean)
+        feat['destination_te']    = feat['destination'].map(dest_map).fillna(global_mean)
+        feat['orig_dest_pair_te'] = feat['orig_dest_pair'].map(pair_map).fillna(global_mean)
+    
+        # E) drop raw string ID columns
+        feat.drop(columns=[
+            'origin','destination','orig_dest_pair',
+            # drop any others you don’t want passed through
+        ], inplace=True, errors='ignore')
+    
+        # F) one-hot encode low-cardinality cats
+        low_card = ['line','origin_state','destination_state',
+                    'origin_interch_type','dest_interch_type',
+                    'line_peak_combo']
+        feat = pd.get_dummies(feat, columns=low_card, drop_first=True, dtype=np.uint8)
+    
+        # G) align to full feature list
+        enc = feat.reindex(columns=feature_columns, fill_value=0)
+    
+        # H) predict & append
         yhat = model.predict(enc)[0]
         series.at[ts] = yhat
         results.append({"date": ts.date(), "predicted_ridership": int(yhat)})
-
+    
     # 8) Show results
     df_res = pd.DataFrame(results)
     st.subheader("Recursive Forecast Results")
