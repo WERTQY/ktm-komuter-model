@@ -322,6 +322,9 @@ def prepare_static_feats(df):
 # ────────────────────────────────────────────────────────────────
 # 4) User Inputs
 # ────────────────────────────────────────────────────────────────
+stl.write("DEBUG: type of stl is", type(stl))
+stl.write("DEBUG: repr(stl) =", repr(stl))
+
 origin      = stl.selectbox("Origin", station_list)
 destination = stl.selectbox("Destination", station_list)
 travel_date = stl.date_input("Predict Through Date", min_value=datetime.date(2025, 5, 13))
