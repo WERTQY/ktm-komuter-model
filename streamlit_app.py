@@ -68,7 +68,7 @@ class FeaturePipeline:
 # -------------------- Load model & coords --------------------
 @st.cache(allow_output_mutation=True)
 def load_model_and_pipeline():
-    model = load("final_lightgbm_model.pkl")
+    model = load("model.joblib")
     try:
         station_coords = load("station_coords.joblib")
     except Exception:
@@ -77,34 +77,71 @@ def load_model_and_pipeline():
     pipeline = FeaturePipeline(station_coords)
     return model, pipeline, station_coords
 
+# -------------------- Load historical data --------------------
+@st.cache(allow_output_mutation=True)
+def load_history():
+    # expect a Parquet or CSV historical file with columns: origin, destination, date, hour, ridership
+    try:
+        hist = pd.read_parquet("full_history.parquet")
+    except Exception:
+        hist = pd.read_csv("full_history.csv", parse_dates=["date"])
+    # filter to 2024 onwards
+    hist = hist[hist['date'] >= pd.to_datetime("2024-01-01")]
+    # ensure correct types
+    hist['date'] = pd.to_datetime(hist['date'])
+    hist['hour'] = hist['hour'].astype(int)
+    return hist
+
 # -------------------- Streamlit UI --------------------
-st.title("🚆 KTM Komuter Ridership Demo")
+st.title("🚆 KTM Komuter Ridership Multi-Step Demo")
 
 # load artifacts
 model, pipeline, station_coords = load_model_and_pipeline()
 stations = sorted(station_coords.keys())
+hist_df = load_history()
 
 # input selectors
 origin = st.selectbox("Origin station", stations)
 destination = st.selectbox("Destination station", stations)
-date = st.date_input("Date")
-hour = st.slider("Hour of day", 0, 23, 8)
+target_date = st.date_input("Forecast until date", value=hist_df['date'].max().date())
+hour = st.slider("Hour of day for forecasts", 0, 23, 8)
 
-# run prediction button
-if st.button("Run prediction"):
-    df_raw = pd.DataFrame([{
-        "origin": origin,
-        "destination": destination,
-        "date": pd.to_datetime(date),
-        "hour": hour
-    }])
-    df_feat = pipeline.transform(df_raw)
-    pred = model.predict(df_feat)[0]
-    df_raw["predicted_ridership"] = pred
-    df_ans = df_raw.copy()
-    df_ans["is_holiday"] = df_ans['date'].dt.date.apply(lambda d: d in holidays.CountryHoliday("MY"))
-    st.table(df_ans)
+# determine last available datetime in history (most recent date and hour)
+last_hist_date = hist_df['date'].max()
+last_hist_hour = hist_df.loc[hist_df['date']==last_hist_date, 'hour'].max()
+last_dt = pd.to_datetime(last_hist_date) + pd.to_timedelta(last_hist_hour, unit='h')
+
+if target_date <= last_dt.date():
+    st.warning(f"Please choose a date after your last data date {last_dt.date()}")
 else:
-    st.write("Select parameters and click 'Run prediction' to see results.")
+    if st.button("Run multi-step forecast"):
+        # iterative forecasting
+        results = []
+        timestamps = []
+        df = hist_df.copy()
+        current = last_dt + pd.Timedelta(days=1)
+        end_date = pd.to_datetime(target_date)
+        while current.date() <= end_date.date():
+            new_row = {
+                "origin": origin,
+                "destination": destination,
+                "date": current.normalize(),
+                "hour": current.hour,
+                "ridership": np.nan
+            }
+            df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+            X_all = pipeline.transform(df.assign(date=pd.to_datetime(df['date'])))
+            X_new = X_all.tail(1)
+            pred = model.predict(X_new)[0]
+            results.append(float(pred))
+            timestamps.append(current)
+            df.at[df.index[-1], 'ridership'] = pred
+            current += pd.Timedelta(days=1)
+        out = pd.DataFrame({"timestamp": timestamps, "predicted_ridership": results})
+        out.set_index('timestamp', inplace=True)
+        st.line_chart(out)
+    else:
+        st.write("Select inputs and click 'Run multi-step forecast' to see predictions from last data up to your date.")
 
-st.markdown("---\n*Built with Streamlit & python-holidays* (national only)")
+st.markdown("---
+*Forecasts start from 2024 and use full history up to last available date.*")
