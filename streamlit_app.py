@@ -5,7 +5,7 @@ import numpy as np
 import pickle
 import datetime
 from collections import defaultdict
-from io import StringIO
+import io
 from geopy.distance import geodesic
 import holidays
 import category_encoders as ce
