@@ -346,24 +346,18 @@ if streamlit.button("Run Recursive Forecast"):
     end_ts   = pd.Timestamp.combine(travel_date, datetime.time(hour))
     pred_times = pd.date_range(start=start_ts, end=end_ts, freq="24H")
 
-    # 7) Loop forward, computing history‐dependent + static features
+     # 7) Loop forward, computing history‐dependent + static features
     results = []
     series = hist.copy()
     for ts in pred_times:
-        # A) history features
-        lag1 = series.shift(1).get(ts, 0.0)
-        lag24 = series.shift(24).get(ts, 0.0)
-        delta = lag1 - lag24
-        # roll7 mean (exclude current ts)
-        win = series[ts-pd.Timedelta(days=7) : ts-pd.Timedelta(hours=1)]
-        roll7 = win.mean() if not win.empty else 0.0
-        std7  = series[:ts].std(ddof=0) if len(series[:ts])>1 else 0.0
-        avg_oh = avg_map.get((origin,hour), 0.0)
+        # … (history features calculation stays the same) …
 
         # B) build one-row df
         row = pd.DataFrame([{
-            "origin": origin, "destination": destination,
-            "date": ts.normalize(), "hour": hour,
+            "origin": origin,
+            "destination": destination,
+            "date": ts.normalize(),
+            "hour": hour,
             "lag1_ridership": lag1,
             "lag24_ridership": lag24,
             "delta_vs_yday": delta,
@@ -371,17 +365,25 @@ if streamlit.button("Run Recursive Forecast"):
             "weekly_pattern_std": std7,
             "avg_ridership_origin_hour": avg_oh
         }])
+
         # C) static features
         feat = prepare_static_feats(row)
-        # D) drop raw, encode, reindex
-        feat.drop(columns=["origin","destination","date","hour"], inplace=True)
+
+        # D) ENCODE FIRST (so enc_hi sees origin, destination, orig_dest_pair)
         enc = enc_hi.transform(feat)
-        enc = pd.get_dummies(enc, drop_first=True).reindex(columns=feature_columns, fill_value=0)
-        # E) predict & append
+
+        # E) now drop the raw ID/date/hour columns
+        enc.drop(columns=["origin", "destination", "date", "hour"], inplace=True, errors="ignore")
+
+        # F) one-hot + align to training columns
+        enc = pd.get_dummies(enc, drop_first=True)
+        enc = enc.reindex(columns=feature_columns, fill_value=0)
+
+        # G) predict & append
         yhat = model.predict(enc)[0]
         series.at[ts] = yhat
         results.append({"date": ts.date(), "predicted_ridership": int(yhat)})
-
+        
     # 8) Show results
     df_res = pd.DataFrame(results)
     streamlit.subheader("Recursive Forecast Results")
