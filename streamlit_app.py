@@ -15,7 +15,7 @@ import category_encoders as ce
 # ────────────────────────────────────────────────────────────────
 @st.cache_resource
 def load_artifacts():
-    model = pickle.load(open("model.pkl","rb"))
+    model = pickle.load(open("model.joblib","rb"))
     enc_hi = pickle.load(open("enc_hi.pkl","rb"))
     feat_cols = pickle.load(open("feature_columns.pkl","rb"))
     # historical ridership up to 2025-05-12
