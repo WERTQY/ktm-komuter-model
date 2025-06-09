@@ -16,7 +16,7 @@ MODEL_CUTOFF = datetime(2025, 5, 12).date()
 START_DATE = MODEL_CUTOFF + timedelta(days=1)
 
 @st.cache
-def load_history(path: str = 'df_ridership_clean.parquet') -> pd.DataFrame:
+def load_history(path: str = 'full_history.parquet') -> pd.DataFrame:
     df = pd.read_parquet(path)
     # Keep only up to cutoff date
     df = df[df['date'].dt.date <= MODEL_CUTOFF]
