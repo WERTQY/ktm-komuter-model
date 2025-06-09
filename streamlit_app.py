@@ -191,9 +191,9 @@ station2lines: dict = defaultdict(list)
 station2state: dict = {}
 for line in ktm_lines:
     lid = line['line_id']
-    for st in line['stations']:
-        station2lines[st['name']].append(lid)
-        station2state[st['name']] = st['state']
+    for station in line['stations']:
+        station2lines[station['name']].append(lid)
+        station2state[station['name']] = station['state']
 
 # Interchange stations (correct spelling)
 station_connections = {
