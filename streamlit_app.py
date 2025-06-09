@@ -1,36 +1,118 @@
-import streamlit
+import streamlit as st
 import pandas as pd
 import numpy as np
 import pickle
 import datetime
-from collections import defaultdict
+import holidays
+
+# Ensure required packages are installed:
+# pip install holidays geopy
+
+# 1) Load trained model
+@st.cache_resource
+def load_model(path: str = 'model.pkl') -> any:
+    with open(path, 'rb') as f:
+        return pickle.load(f)
+
+model = load_model('model.pkl')
+
+# 2) Load historical data for feature building (up to cutoff)
+@st.cache_data
+def load_history(path: str = 'full_history.parquet') -> pd.DataFrame:
+    df = pd.read_parquet(path)
+    # Convert timestamp to Python date for consistency in comparisons
+    df['date'] = pd.to_datetime(df['date']).dt.date
+    return df
+
+history = load_history()
+
+# 3) Initialize Malaysia holidays
+@st.cache_data
+def get_my_holidays(start_year: int = 2024, end_year: int = 2030) -> holidays.HolidayBase:
+    years = list(range(start_year, end_year + 1))
+    return holidays.Malaysia(years=years)
+
+my_holidays = get_my_holidays()
+
+# 4) Static station metadata (coords, states, etc.)
 from io import StringIO
 from geopy.distance import geodesic
-import holidays
-import category_encoders as ce
 
-# ────────────────────────────────────────────────────────────────
-# 1) Load model, encoder, feature list, and historical data
-# ────────────────────────────────────────────────────────────────
-@streamlit.cache_resource
-def load_artifacts():
-    model = pickle.load(open("model.pkl","rb"))
-    enc_hi = pickle.load(open("enc_hi.pkl","rb"))
-    feat_cols = pickle.load(open("feature_columns.pkl","rb"))
-    # historical ridership up to 2025-05-12
-    hist = pd.read_parquet("full_history.parquet", columns=[
-        "date","hour","origin","destination","ridership"
-    ])
-    return model, enc_hi, feat_cols, hist
+station_coords_csv = """stop_id,stop_name,stop_lat,stop_lon
+50000,Sentul,3.183581,101.688802
+50300,Batu Kentonmen,3.198485,101.681138
+50400,Kampung Batu,3.204892,101.675584
+50500,Taman Wahyu,3.21451,101.672178
+50600,Batu Caves,3.237796,101.681215
+52700,Abdullah Hukum,3.11869,101.67293
+52800,Angkasapuri,3.113212,101.673367
+52900,Pantai Dalam,3.095607,101.669927
+53000,Petaling,3.086485,101.664338
+53100,Jalan Templer,3.084013,101.656402
+53400,Kampung Dato Harun,3.084828,101.632339
+53500,Seri Setia,3.083373,101.61143
+53600,Setia Jaya,3.083373,101.61143
+53700,Subang Jaya,3.084554,101.587373
+53800,Batu Tiga,3.076091,101.559811
+54200,Shah Alam,3.056388,101.525302
+54400,Padang Jawa,3.052532,101.492742
+54500,Bukit Badak,3.036147,101.470176
+54700,Klang,3.043078,101.449543
+54800,Teluk Pulai,3.04089,101.432153
+54900,Teluk Gadong,3.033932,101.424947
+55000,Kampung Raja Uda,3.020253,101.41023
+55100,Jalan Kastam,3.013128,101.402599
+55200,Pelabuhan Klang,2.999323,101.39179
+18400,Kepong Sentral,3.208653,101.62849
+18600,Kepong,3.202996,101.637381
+18700,Segambut,3.186514,101.664032
+18800,Putra,3.165399,101.691101
+18900,Bank Negara,3.155105,101.693118
+19000,Kuala Lumpur,3.139444,101.693333
+19100,KL Sentral,3.134167,101.686111
+19205,MidValley,3.119211,101.678865
+19300,Seputeh,3.113612,101.681474
+19400,Salak Selatan,3.098413,101.705055
+19600,Bandar Tasek Selatan,3.076229,101.711119
+19900,Serdang,3.023404,101.716056
+20400,Kajang,2.983222,101.790669
+20402,Kajang 2,2.96264,101.79207
+20500,UKM,2.939775,101.787623
+20900,Bangi,2.904467,101.785943
+21300,Batang Benar,2.829904,101.826655
+21500,Nilai,2.802356,101.799303
+22000,Labu,2.754501,101.826656
+22400,Tiroi,2.741459,101.871914
+22700,Seremban,2.719169,101.940792
+22900,Senawang,2.690138,101.972336
+23100,Sungai Gadut,2.660898,101.996158
+23900,Rembau,2.593055,102.094653
+25100,Pulau Sebang,2.46396,102.226308
+15200,Tanjung Malim,3.685142,101.518165
+15400,Kalumpang,3.5566,101.5612
+16100,Kuala Kubu Bharu,3.553215,101.639591
+16300,Rasa,3.500586,101.634113
+16500,Batang Kali,3.46838,101.637759
+17300,Serendah,3.376172,101.614532
+17800,Rawang,3.318955,101.575012
+18100,Kuang,3.258267,101.554794
+18500,Sungai Buloh,3.206356,101.580128
+"""
 
-model, enc_hi, feature_columns, hist_df = load_artifacts()
+# Parse station coords and build lookup
+df_station_coor = pd.read_csv(StringIO(station_coords_csv))
+distance_lookup: dict = {}
+coords = df_station_coor.set_index('stop_name')[['stop_lat','stop_lon']].to_dict('index')
+for s1, c1 in coords.items():
+    for s2, c2 in coords.items():
+        distance_lookup[(s1, s2)] = geodesic(
+            (c1['stop_lat'], c1['stop_lon']),
+            (c2['stop_lat'], c2['stop_lon'])
+        ).km
 
-streamlit.title("KTM Komuter Recursive Ridership Predictor")
+# KTM lines and station metadata
+from collections import defaultdict
 
-# ────────────────────────────────────────────────────────────────
-# 2) Precompute static maps (lines, states, coords, distances, holidays…)
-# ────────────────────────────────────────────────────────────────
-# 2.1 ktm_lines (fill in your full list)
 ktm_lines = [
     {
         "line_id": "Tanjung Malim–Port Klang",
@@ -104,313 +186,157 @@ ktm_lines = [
         ]
     }
 ]
-
-station2lines = defaultdict(list)
-station2state = {}
+# Build station->lines and station->state lookup
+station2lines: dict = defaultdict(list)
+station2state: dict = {}
 for line in ktm_lines:
-    lid = line["line_id"]
-    for s in line["stations"]:
-        name = s["name"].strip()
-        station2lines[name].append(lid)
-        station2state[name] = s["state"]
-station_list = sorted(station2state)
+    lid = line['line_id']
+    for st in line['stations']:
+        station2lines[st['name']].append(lid)
+        station2state[st['name']] = st['state']
 
-# 2.2 station coords CSV (fill in all rows)
-station_coords_csv = """stop_id,stop_name,stop_lat,stop_lon
-50000,Sentul,3.183581,101.688802
-50300,Batu Kentonmen,3.198485,101.681138
-50400,Kampung Batu,3.204892,101.675584
-50500,Taman Wahyu,3.21451,101.672178
-50600,Batu Caves,3.237796,101.681215
-52700,Abdullah Hukum,3.11869,101.67293
-52800,Angkasapuri,3.113212,101.673367
-52900,Pantai Dalam,3.095607,101.669927
-53000,Petaling,3.086485,101.664338
-53100,Jalan Templer,3.084013,101.656402
-53400,Kampung Dato Harun,3.084828,101.632339
-53500,Seri Setia,3.083373,101.61143
-53600,Setia Jaya,3.083373,101.61143
-53700,Subang Jaya,3.084554,101.587373
-53800,Batu Tiga,3.076091,101.559811
-54200,Shah Alam,3.056388,101.525302
-54400,Padang Jawa,3.052532,101.492742
-54500,Bukit Badak,3.036147,101.470176
-54700,Klang,3.043078,101.449543
-54800,Teluk Pulai,3.04089,101.432153
-54900,Teluk Gadong,3.033932,101.424947
-55000,Kampung Raja Uda,3.020253,101.41023
-55100,Jalan Kastam,3.013128,101.402599
-55200,Pelabuhan Klang,2.999323,101.39179
-18400,Kepong Sentral,3.208653,101.62849
-18600,Kepong,3.202996,101.637381
-18700,Segambut,3.186514,101.664032
-18800,Putra,3.165399,101.691101
-18900,Bank Negara,3.155105,101.693118
-19000,Kuala Lumpur,3.139444,101.693333
-19100,KL Sentral,3.134167,101.686111
-19205,MidValley,3.119211,101.678865
-19300,Seputeh,3.113612,101.681474
-19400,Salak Selatan,3.098413,101.705055
-19600,Bandar Tasek Selatan,3.076229,101.711119
-19900,Serdang,3.023404,101.716056
-20400,Kajang,2.983222,101.790669
-20402,Kajang 2,2.96264,101.79207
-20500,UKM,2.939775,101.787623
-20900,Bangi,2.904467,101.785943
-21300,Batang Benar,2.829904,101.826655
-21500,Nilai,2.802356,101.799303
-22000,Labu,2.754501,101.826656
-22400,Tiroi,2.741459,101.871914
-22700,Seremban,2.719169,101.940792
-22900,Senawang,2.690138,101.972336
-23100,Sungai Gadut,2.660898,101.996158
-23900,Rembau,2.593055,102.094653
-25100,Pulau Sebang,2.46396,102.226308
-15200,Tanjung Malim,3.685142,101.518165
-15400,Kalumpang,3.5566,101.5612
-16100,Kuala Kubu Bharu,3.553215,101.639591
-16300,Rasa,3.500586,101.634113
-16500,Batang Kali,3.46838,101.637759
-17300,Serendah,3.376172,101.614532
-17800,Rawang,3.318955,101.575012
-18100,Kuang,3.258267,101.554794
-18500,Sungai Buloh,3.206356,101.580128
-"""
-df_coords = pd.read_csv(StringIO(station_coords_csv)).drop(columns=["stop_id"])
-df_coords.rename(columns={"stop_name":"station","stop_lat":"lat","stop_lon":"lon"}, inplace=True)
-coord_map = df_coords.set_index("station")[["lat","lon"]].to_dict("index")
-
-# 2.3 Distances to KL Sentral
-center = (coord_map["KL Sentral"]["lat"], coord_map["KL Sentral"]["lon"])
-station_to_center = {
-    st: geodesic((c["lat"],c["lon"]), center).km
-    for st,c in coord_map.items()
+# Interchange stations (correct spelling)
+station_connections = {
+    "Bandar Tasik Selatan": {
+        "connections": ["LRT_Sri_Petaling_Line", "ERL_KLIA_Transit"],
+        "interchange_type": "direct"
+    },
+    "KL Sentral": {
+        "connections": ["LRT_Kelana_Jaya_Line", "MRT_Kajang_Line", "Monorail",
+                        "ERL_KLIA_Transit", "ERL_KLIA_Ekspres", "GoKL_Bus"],
+        "interchange_type": "direct"
+    },
+    "Kuala Lumpur": {
+        "connections": ["LRT_Ampang_Line", "LRT_Sri_Petaling_Line", "GoKL_Bus"],
+        "interchange_type": "indirect"
+    },
+    "Bank Negara": {
+        "connections": ["LRT_Ampang_Line", "LRT_Sri_Petaling_Line", "GoKL_Bus"],
+        "interchange_type": "indirect"
+    },
+    "Putra": {
+        "connections": ["LRT_Ampang_Line", "LRT_Sri_Petaling_Line", "GoKL_Bus"],
+        "interchange_type": "indirect"
+    },
+    "Subang Jaya": {
+        "connections": ["LRT_Kelana_Jaya_Line"],
+        "interchange_type": "direct"
+    },
+    "Abdullah Hukum": {
+        "connections": ["LRT_Kelana_Jaya_Line"],
+        "interchange_type": "direct"
+    },
+    "Kajang": {
+        "connections": ["MRT_Kajang_Line", "MRT_Feeder_Bus"],
+        "interchange_type": "direct"
+    },
+    "Sungai Buloh": {
+        "connections": ["MRT_Putrajaya_Line"],
+        "interchange_type": "direct"
+    },
+    "Setia Jaya": {
+        "connections": ["BRT_Sunway_Line"],
+        "interchange_type": "direct"
+    },
+    "Serdang": {
+        "connections": ["MRT_Feeder_Bus"],
+        "interchange_type": "feeder"
+    },
+    "Kepong Sentral": {
+        "connections": ["MRT_Putrajaya_Line"],
+        "interchange_type": "direct"
+    },
+    "Kampung Batu": {
+        "connections": ["MRT_Putrajaya_Line"],
+        "interchange_type": "direct"
+    }
 }
 
-# 2.4 Nearest interchange distance
-interchange_stations = [
-    "KL Sentral","Bandar Tasek Selatan","Kuala Lumpur",
-    "Bank Negara","Putra","Subang Jaya","Kajang"
-]
-inter_coords = [(coord_map[s]["lat"],coord_map[s]["lon"]) for s in interchange_stations]
-station_to_interchange = {}
-for station,c in coord_map.items():
-    if station in interchange_stations:
-        station_to_interchange[station] = 0.0
-    else:
-        station_to_interchange[station] = min(
-            geodesic((c["lat"],c["lon"]), ic).km for ic in inter_coords
-        )
+central_corridor_stations = ['Putra','Bank Negara','Kuala Lumpur','KL Sentral']
 
-# 2.5 Station density within 5 km
-def density(st):
-    lat0,lon0 = coord_map[st]["lat"], coord_map[st]["lon"]
-    return sum(
-        1 for o,c in coord_map.items()
-        if o!=st and geodesic((lat0,lon0),(c["lat"],c["lon"])).km<=5
-    )
-station_density = {st:density(st) for st in coord_map}
-
-# 2.6 Holiday calendars
-# nat_hols = holidays.Malaysia()
-# state_hols = {st: holidays.Malaysia(subdiv=st) for st in set(station2state.values())}
-# Holiday calendars: try state‐level, else fallback to national
-nat_hols = holidays.Malaysia()
-state_hols = {}
-for state in set(station2state.values()):
-    try:
-        state_hols[state] = holidays.Malaysia(subdiv=state)
-    except NotImplementedError:
-        # fallback for unsupported subdivision names
-        state_hols[state] = nat_hols
-festivals = {"Chinese New Year","Thaipusam","Hari Raya Puasa","Hari Raya Haji","Deepavali"}
-
-# 2.7 Precompute per-origin/hour average ridership from hist_df
-avg_map = (
-    hist_df
-    .groupby(["origin","hour"])["ridership"]
-    .mean()
-    .to_dict()
-)
-
-# ────────────────────────────────────────────────────────────────
-# 3) Helper: build all non-history features for a single timestamp
-# ────────────────────────────────────────────────────────────────
-def prepare_static_feats(df):
-    """
-    Takes a DataFrame with columns:
-      ['origin','destination','date','hour']
-    and returns same DataFrame with all static features computed:
-      lines, states, is_peak, distances, cyclic, holiday, interactions…
-    """
-    df = df.copy()
-    # date parts
-    df["day_of_week"]  = df["date"].dt.dayofweek
-    df["year"]         = df["date"].dt.year
-    df["month"]        = df["date"].dt.month
-    df["day_of_mon"]   = df["date"].dt.day
-    df["quarter"]      = df["date"].dt.quarter
-    df["week_of_yr"]   = df["date"].dt.isocalendar().week.astype(int)
-    # line
-    def pick_line(o,d):
-        ol,dl = station2lines[o], station2lines[d]
-        c = set(ol)&set(dl)
-        if   len(c)==1: return c.pop()
-        elif len(c)>1:  return "Central Corridor"
-        else:           return f"{ol[0]} -> {dl[0]} (Transfer)"
-    df["line"] = df.apply(lambda r: pick_line(r.origin,r.destination), axis=1)
-    # states & interch
-    df["origin_state"]      = df["origin"].map(station2state)
-    df["destination_state"] = df["destination"].map(station2state)
-    df["is_origin_central"] = df["origin"].isin(interchange_stations).astype("uint8")
-    df["is_dest_central"]   = df["destination"].isin(interchange_stations).astype("uint8")
-    df["origin_is_interch"]= df["origin"].isin(interchange_stations).astype("uint8")
-    df["dest_is_interch"]  = df["destination"].isin(interchange_stations).astype("uint8")
-    # connections (zero if you don’t have station_connections)
-    transports = [
-      "LRT_Sri_Petaling_Line","LRT_Kelana_Jaya_Line","MRT_Kajang_Line",
-      "Monorail","ERL_KLIA_Transit","ERL_KLIA_Ekspres",
-      "BRT_Sunway_Line","GoKL_Bus","MRT_Feeder_Bus","MRT_Putrajaya_Line"
+# 5) Feature builder
+def build_features(df_hist: pd.DataFrame, origin: str, dest: str, date: datetime.date, hour: int) -> pd.DataFrame:
+    row = {
+        'origin': origin,
+        'destination': dest,
+        'date': date,
+        'hour': hour,
+    }
+    # Temporal features
+    dow = date.weekday()
+    row['day_of_week'] = dow
+    row['is_holiday'] = int(date in my_holidays)
+    # Cyclical features
+    row['hour_sin'] = np.sin(2 * np.pi * hour / 24)
+    row['hour_cos'] = np.cos(2 * np.pi * hour / 24)
+    row['dow_sin'] = np.sin(2 * np.pi * dow / 7)
+    row['dow_cos'] = np.cos(2 * np.pi * dow / 7)
+    # Historical lags
+    odh = df_hist[
+        (df_hist.origin == origin) &
+        (df_hist.destination == dest) &
+        (df_hist.hour == hour)
     ]
-    for t in transports:
-        df[f"orig_conn_{t}"] = 0
-        df[f"dest_conn_{t}"] = 0
-    # distances
-    df["straight_line_distance_km"] = df.apply(
-        lambda r: geodesic(
-            (coord_map[r.origin]["lat"],coord_map[r.origin]["lon"]),
-            (coord_map[r.destination]["lat"],coord_map[r.destination]["lon"])
-        ).km, axis=1
-    )
-    df["dist_orig_center"]    = df["origin"].map(station_to_center)
-    df["dist_dest_center"]    = df["destination"].map(station_to_center)
-    df["orig_dist_to_interchange"] = df["origin"].map(station_to_interchange)
-    df["dest_dist_to_interchange"] = df["destination"].map(station_to_interchange)
-    df["orig_station_density"]     = df["origin"].map(station_density)
-    df["dest_station_density"]     = df["destination"].map(station_density)
-    # cyclic
-    df["hour_sin"]   = np.sin(2*np.pi*df["hour"]/24)
-    df["hour_cos"]   = np.cos(2*np.pi*df["hour"]/24)
-    df["dow_sin"]    = np.sin(2*np.pi*df["day_of_week"]/7)
-    df["dow_cos"]    = np.cos(2*np.pi*df["day_of_week"]/7)
-    df["month_sin"]  = np.sin(2*np.pi*(df["month"]-1)/12)
-    df["month_cos"]  = np.cos(2*np.pi*(df["month"]-1)/12)
-    # holidays
-    df["orig_holiday"] = df.apply(
-        lambda r: r["date"] in state_hols.get(r["origin_state"],nat_hols), axis=1
-    ).astype("uint8")
-    df["dest_holiday"] = df.apply(
-        lambda r: r["date"] in state_hols.get(r["destination_state"],nat_hols), axis=1
-    ).astype("uint8")
-    df["is_holiday"] = (df["orig_holiday"]|df["dest_holiday"]).astype("uint8")
-    # near-festival
-    fest_dates = [
-        pd.Timestamp(d)   # convert date → Timestamp
-        for d,name in nat_hols.items() 
-        if name in festivals
-    ]
-    df["near_big_holiday"] = df["date"].apply(
-        lambda d: any(abs((d-f).days)<=1 for f in fest_dates)
-    ).astype("uint8")
-    # interactions
-    df["orig_dest_pair"]  = df["origin"]+"_"+df["destination"]
-    df["is_peak"]         = ((df["hour"].between(7,9)|df["hour"].between(17,19))).astype("uint8")
-    df["line_peak_combo"] = df["line"] + "_" + df["is_peak"].astype(str)
-    df["same_state"]      = (df["origin_state"]==df["destination_state"]).astype("uint8")
-    df["both_interch"]    = (df["origin_is_interch"]&df["dest_is_interch"]).astype("uint8")
-    df["same_corridor"]   = (df["is_origin_central"]&df["is_dest_central"]).astype("uint8")
-    df["hour_weekend"]    = df["hour"]*((df["day_of_week"]>=5).astype(int))
-    df["peak_on_corridor"]= (df["is_peak"]&df["same_corridor"]).astype("uint8")
-    return df
+    prev1 = odh[odh.date == (date - datetime.timedelta(days=1))]['ridership']
+    row['lag1_ridership'] = float(prev1.values[0]) if len(prev1) > 0 else 0.0
+    window = odh[ (odh.date >= (date - datetime.timedelta(days=7))) & (odh.date < date) ]['ridership']
+    row['roll7_mean_od'] = float(window.mean()) if len(window) > 0 else 0.0
+    row['weekly_pattern_std'] = float(odh['ridership'].std()) if len(odh) > 1 else 0.0
+    # Spatial features
+    dist = distance_lookup.get((origin, dest), np.nan)
+    row['straight_line_distance_km'] = dist
+    row['trip_duration_estimate_min'] = (dist / 120) * 60 if not np.isnan(dist) else np.nan
+    row['same_state'] = int(station2state.get(origin) == station2state.get(dest))
+    row['is_origin_central'] = int(origin in central_corridor_stations)
+    row['is_dest_central'] = int(dest in central_corridor_stations)
+    row['origin_is_interch'] = int(origin in station_connections)
+    row['dest_is_interch'] = int(dest in station_connections)
+    return pd.DataFrame([row])
 
-# ────────────────────────────────────────────────────────────────
-# 4) User Inputs
-# ────────────────────────────────────────────────────────────────
-origin      = streamlit.selectbox("Origin", station_list)
-destination = streamlit.selectbox("Destination", station_list)
-travel_date = streamlit.date_input("Predict Through Date", min_value=datetime.date(2025, 5, 13))
-hour        = streamlit.number_input("Hour of Day", min_value=0, max_value=23, value=0)
+# 6) UI
+st.title('KTM Komuter Ridership Forecast')
+st.markdown('Select origin, destination, date (>= 2025-05-13) and hour to forecast ridership.')
 
-if streamlit.button("Run Recursive Forecast"):
-    # 5) Seed series with real ridership up to 2025-05-12 at this hour:
-    hist = hist_df[
-        (hist_df.origin==origin)&
-        (hist_df.destination==destination)&
-        (hist_df.hour==hour)
-    ].copy()
-    hist.index = pd.to_datetime(hist.date) + pd.to_timedelta(hist.hour, "h")
-    hist = hist.sort_index()["ridership"]
+origins = history.origin.unique()
+destinations = history.destination.unique()
+origin = st.selectbox('Origin', sorted(origins))
+destination = st.selectbox('Destination', sorted(destinations))
 
-    # 6) Build prediction timestamps (each day at chosen hour)
-    start_ts = pd.Timestamp("2025-05-13") + pd.Timedelta(hours=hour)
-    end_ts   = pd.Timestamp.combine(travel_date, datetime.time(hour))
-    pred_times = pd.date_range(start=start_ts, end=end_ts, freq="24H")
+selected_date = st.date_input('Date', min_value=datetime.date(2025, 5, 13), value=datetime.date(2025, 5, 13))
+hour = st.slider('Hour', 0, 23, 8)
 
-    # … after computing pred_times …
+# Recursive forecasting
+def recursive_forecast():
+    start_date = history.date.max() + datetime.timedelta(days=1)
+    end_date = selected_date
+    if end_date < start_date:
+        st.warning(f"Please select a date on or after {start_date.isoformat()}.")
+        return
+    dates = pd.date_range(start_date, end_date, freq='D').date
+    preds = []
+    hist = history.copy()
+    for current_date in dates:
+        feats = build_features(hist, origin, destination, current_date, hour)
+        X = feats[model.feature_names_in_]
+        yhat = model.predict(X)[0]
+        preds.append({'date': current_date, 'predicted_ridership': float(yhat)})
+        new = feats.copy()
+        new['ridership'] = yhat
+        hist = pd.concat([hist, new], ignore_index=True)
+    result = pd.DataFrame(preds)
+    st.line_chart(result.set_index('date')['predicted_ridership'])
+    st.dataframe(result)
 
-# 2.7 Extract the three target‐encode mappings once up front
-# 2.7 Extract the three target‐encode mappings once up front
-    mp = enc_hi.mapping
-    if isinstance(mp, dict):
-        # mapping was saved as {col: pd.Series(mapping), ...}
-        origin_map = mp['origin']
-        dest_map   = mp['destination']
-        pair_map   = mp['orig_dest_pair']
-    else:
-        # fallback for list-of-dicts style
-        def _get_map_list(mapping, col):
-            for m in mapping:
-                if m.get('col') == col:
-                    return m.get('mapping')
-            raise KeyError(f"No mapping found for {col}")
-        origin_map = _get_map_list(mp, 'origin')
-        dest_map   = _get_map_list(mp, 'destination')
-        pair_map   = _get_map_list(mp, 'orig_dest_pair')
-    
-    global_mean = enc_hi._global_mean
+# Single-step prediction
+def single_predict():
+    feats = build_features(history, origin, destination, selected_date, hour)
+    X = feats[model.feature_names_in_]
+    yhat = model.predict(X)[0]
+    st.write(f"Predicted ridership on {selected_date} at {hour}:00 → {yhat:.1f} riders")
 
+if st.button('Predict Series'):
+    recursive_forecast()
+elif st.button('Predict Single'):
+    single_predict()
 
-    # B) build one-row df
-    row = pd.DataFrame([{
-        "origin": origin,
-        "destination": destination,
-        "orig_dest_pair": f"{origin}_{destination}",
-        "date": ts.normalize(),
-        "hour": hour,
-        "lag1_ridership": lag1,
-        "lag24_ridership": lag24,
-        "delta_vs_yday": delta,
-        "roll7_mean_od": roll7,
-        "weekly_pattern_std": std7,
-        "avg_ridership_origin_hour": avg_oh
-    }])
-
-    # C) static
-    feat = prepare_static_feats(row)
-
-    # D) manual target‐encode
-    feat['origin_te']         = feat['origin'].map(origin_map).fillna(global_mean)
-    feat['destination_te']    = feat['destination'].map(dest_map).fillna(global_mean)
-    feat['orig_dest_pair_te'] = feat['orig_dest_pair'].map(pair_map).fillna(global_mean)
-
-    # E) drop raw ID cols
-    feat.drop(columns=['origin','destination','orig_dest_pair'], inplace=True, errors='ignore')
-
-    # F) one-hot low-card
-    low_card = ['line','origin_state','destination_state',
-                'origin_interch_type','dest_interch_type',
-                'line_peak_combo']
-    feat = pd.get_dummies(feat, columns=low_card, drop_first=True, dtype=np.uint8)
-
-    # G) align
-    enc = feat.reindex(columns=feature_columns, fill_value=0)
-
-    # H) predict & append
-    yhat = model.predict(enc)[0]
-    series.at[ts] = yhat
-    results.append({"date": ts.date(), "predicted_ridership": int(yhat)})
-
-# 8) Show results
-df_res = pd.DataFrame(results)
-st.subheader("Recursive Forecast Results")
-st.dataframe(df_res, use_container_width=True)
+# To run: streamlit run streamlit_app.py
