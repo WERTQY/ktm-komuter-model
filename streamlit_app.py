@@ -5,6 +5,9 @@ import pickle
 import datetime
 import holidays
 
+st.set_option('server.showTraceback', True)
+st.set_option('global.developmentMode', True)
+
 # Ensure required packages are installed:
 # pip install holidays geopy
 
