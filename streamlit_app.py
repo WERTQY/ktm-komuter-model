@@ -5,19 +5,20 @@ import pickle
 import datetime
 import holidays
 
-st.set_option('server.showTraceback', True)
-st.set_option('global.developmentMode', True)
-
-# Ensure required packages are installed:
-# pip install holidays geopy
-
 # 1) Load trained model
 @st.cache_resource
 def load_model(path: str = 'model.pkl') -> any:
     with open(path, 'rb') as f:
         return pickle.load(f)
 
-model = load_model('model.pkl')
+try:
+    model = load_model('model.pkl')
+except Exception as e:
+    st.error("❌ Failed to load model.pkl")
+    st.text(str(e))
+    st.text(traceback.format_exc())
+    st.stop()
+
 
 # 2) Load historical data for feature building (up to cutoff)
 @st.cache_data
@@ -27,7 +28,13 @@ def load_history(path: str = 'full_history.parquet') -> pd.DataFrame:
     df['date'] = pd.to_datetime(df['date']).dt.date
     return df
 
-history = load_history()
+try:
+    history = load_history()
+except Exception as e:
+    st.error("❌ Failed to load full_history.parquet")
+    st.text(str(e))
+    st.text(traceback.format_exc())
+    st.stop()
 
 # 3) Initialize Malaysia holidays
 @st.cache_data
