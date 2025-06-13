@@ -3,15 +3,51 @@ import pandas as pd
 import pickle
 from datetime import date
 
-# --- 1) Load trained pipeline ---
+# --- 1) Load or build trained pipeline ---
+import os
+import subprocess
+
 @st.cache_resource
 def load_pipeline(path='pipeline.pkl'):
     with open(path, 'rb') as f:
         return pickle.load(f)
 
+# Ensure pipeline exists; if not, build it
+if not os.path.exists('pipeline.pkl'):
+    with st.spinner("No pipeline found; training model pipeline…"):
+        subprocess.run(["python", "pipeline.py", "--train"], check=True)
+    load_pipeline.clear()
+
 pipeline = load_pipeline()
 
+
 # --- 2) Build UI for user inputs ---
+st.subheader("Enter Trip Details")
+origin = st.text_input(
+    "Origin Station", 
+    value="Sentul",
+    help="Type a KTM station name, e.g. 'Sentul'"
+)
+destination = st.text_input(
+    "Destination Station", 
+    value="Kuala Lumpur",
+    help="Type a KTM station name, e.g. 'Kuala Lumpur'"
+)
+# Date picker: no earlier than 2025-05-13
+day = st.date_input(
+    "Date (>= May 13, 2025)",
+    value=date(2025, 5, 13),
+    min_value=date(2025, 5, 13)
+)
+# Hour selector
+hour = st.slider(
+    "Hour of Day",
+    min_value=0,
+    max_value=23,
+    value=12,
+    help="Select hour (0–23)"
+)
+
 
 # Optionally rebuild pipeline from raw data
 if st.button("Rebuild Model Pipeline"):
